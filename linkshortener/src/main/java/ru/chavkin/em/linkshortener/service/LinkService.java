@@ -2,31 +2,36 @@ package ru.chavkin.em.linkshortener.service;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import ru.chavkin.em.linkshortener.entity.Constants;
 import ru.chavkin.em.linkshortener.entity.Link;
+import ru.chavkin.em.linkshortener.entity.LinkConfigurationProperties;
 import ru.chavkin.em.linkshortener.entity.dto.ShortenRequest;
 import ru.chavkin.em.linkshortener.entity.dto.ShortenResponse;
 import ru.chavkin.em.linkshortener.entity.enumerated.ExceptionMessage;
 import ru.chavkin.em.linkshortener.entity.mapper.LinkMapper;
+import ru.chavkin.em.linkshortener.exception.LinkConstraintException;
+import ru.chavkin.em.linkshortener.exception.LinkNotFoundException;
 import ru.chavkin.em.linkshortener.exception.ShortCodeGenerationMaxAttemptsException;
 import ru.chavkin.em.linkshortener.repository.LinkRepository;
 import ru.chavkin.em.linkshortener.validator.LinkValidator;
 
 import java.security.SecureRandom;
-import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 import java.util.Optional;
 import java.util.stream.IntStream;
 
 @Slf4j
 @Service
 @RequiredArgsConstructor
+@EnableConfigurationProperties({LinkConfigurationProperties.class})
 public class LinkService {
 
     private final LinkMapper linkMapper;
     private final LinkValidator linkValidator;
     private final LinkRepository linkRepository;
+    private final LinkConfigurationProperties props;
 
     /**
      * Method to create Link entity.
@@ -51,8 +56,6 @@ public class LinkService {
             Link link = save(request.originalUrl(), shortCode, shortCode, linkValidator.resolveTtlDays(request.ttlDays()));
             log.info("Link without the specified alias was saved successfully: {}", link);
             return linkMapper.fromEntityToResponse(link);
-        } else {
-            linkValidator.checkAndThrowIfAliasExists(request.alias());
         }
 
         Link link = save(request.originalUrl(), shortCode, request.alias(), linkValidator.resolveTtlDays(request.ttlDays()));
@@ -70,14 +73,26 @@ public class LinkService {
      * @return saved Link entity.
      */
     public Link save(String originalUrl, String shortCode, String alias, Integer ttlDays) {
-        Link link = Link.builder()
-                .originalUrl(originalUrl)
-                .shortCode(shortCode)
-                .alias(alias)
-                .createdAt(LocalDateTime.now())
-                .expiresAt(LocalDateTime.now().plusDays(ttlDays))
-                .build();
-        return linkRepository.save(link);
+
+        try {
+            linkValidator.checkAndThrowIfAliasExists(alias);
+
+            Link link = Link.builder()
+                    .originalUrl(originalUrl)
+                    .shortCode(shortCode)
+                    .alias(alias)
+                    .createdAt(OffsetDateTime.now())
+                    .expiresAt(OffsetDateTime.now().plusDays(ttlDays))
+                    .build();
+
+            return linkRepository.save(link);
+        } catch (LinkConstraintException e) {
+            throw new LinkConstraintException(
+                    ExceptionMessage.LINK_WITH_CONSTRAINT_FIELD_ALREADY_EXISTS.getErrorMessage(),
+                    ExceptionMessage.LINK_WITH_CONSTRAINT_FIELD_ALREADY_EXISTS.getErrorCode()
+            );
+        }
+
     }
 
     /**
@@ -92,27 +107,29 @@ public class LinkService {
      * - or the link has expired
      *
      * @param code shortCode or alias
-     * @return Optional with active link or empty
+     * @return Original url
      */
-    public Optional<Link> findByAliasOrShortCode(String code) {
+    public String getUrlByAliasOrShortCode(String code) {
         log.debug("Searching for link by code: {}", code);
-
-        Optional<Link> link = linkRepository.findByAlias(code);
-
-        if (link.isEmpty()) {
-            log.debug("Alias not found, trying shortCode: {}", code);
-            link = linkRepository.findByShortCode(code);
+        String trimmedCode = code.trim();
+        if (trimmedCode.isEmpty()) {
+            throw new IllegalArgumentException("code is empty");
         }
-
-        return link.filter(this::isLinkActive);
+        return linkRepository.findByAliasOrShortCode(trimmedCode)
+                .map(Link::getOriginalUrl)
+                .orElseThrow(() -> new LinkNotFoundException(
+                        ExceptionMessage.LINK_NOT_FOUND.getErrorMessage(),
+                        ExceptionMessage.LINK_NOT_FOUND.getErrorCode()
+                ));
     }
+
 
     /**
      * Checks if the link is active (not expired).
      */
     public boolean isLinkActive(Link link) {
-        LocalDateTime expiresAt = link.getExpiresAt();
-        boolean isActive = expiresAt == null || expiresAt.isAfter(LocalDateTime.now());
+        OffsetDateTime expiresAt = link.getExpiresAt();
+        boolean isActive = expiresAt == null || expiresAt.isAfter(OffsetDateTime.now());
         if (!isActive) {
             log.debug("Link is expired: shortCode={}, alias={}, expiresAt={}",
                     link.getShortCode(), link.getAlias(), expiresAt);
@@ -127,7 +144,7 @@ public class LinkService {
      * @return Checked for missing in the database, ready to use {@code shortCode}
      */
     public String generateShortCode() {
-        return IntStream.range(0, Constants.SHORT_CODE_MAX_GENERATION_ATTEMPTS)
+        return IntStream.range(0, props.getMaxGenerationAttempts())
                 .mapToObj(i -> generateRandomCode())
                 .filter(code -> !linkRepository.existsByShortCode(code))
                 .findFirst()
@@ -147,10 +164,10 @@ public class LinkService {
      */
     public String generateRandomCode() {
         SecureRandom random = new SecureRandom();
-        StringBuilder sb = new StringBuilder(Constants.SHORT_CODE_LENGTH);
-        for (int i = 0; i < Constants.SHORT_CODE_LENGTH; i++) {
-            int index = random.nextInt(Constants.SHORT_CODE_MAX_LENGTH);
-            sb.append(Constants.SHORT_CODE_ALLOWED_CHARACTERS.charAt(index));
+        StringBuilder sb = new StringBuilder(props.getLength());
+        for (int i = 0; i < props.getLength(); i++) {
+            int index = random.nextInt(props.getShortCodeAllowedCharacters().length());
+            sb.append(props.getShortCodeAllowedCharacters().charAt(index));
         }
         return sb.toString();
     }

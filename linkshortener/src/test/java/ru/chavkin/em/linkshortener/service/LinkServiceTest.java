@@ -7,7 +7,10 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import ru.chavkin.em.linkshortener.entity.Constants;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
+import ru.chavkin.em.linkshortener.entity.LinkConfigurationProperties;
 import ru.chavkin.em.linkshortener.entity.Link;
 import ru.chavkin.em.linkshortener.entity.dto.ShortenRequest;
 import ru.chavkin.em.linkshortener.entity.dto.ShortenResponse;
@@ -19,7 +22,7 @@ import ru.chavkin.em.linkshortener.exception.ShortCodeGenerationMaxAttemptsExcep
 import ru.chavkin.em.linkshortener.repository.LinkRepository;
 import ru.chavkin.em.linkshortener.validator.LinkValidator;
 
-import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -28,7 +31,12 @@ import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
 @DisplayName("Тесты для LinkService")
+@MockitoSettings(strictness = Strictness.LENIENT)
+@EnableConfigurationProperties(LinkConfigurationProperties.class)
 class LinkServiceTest {
+
+    @Mock
+    private LinkConfigurationProperties props;
 
     @Mock
     private LinkRepository linkRepository;
@@ -60,7 +68,7 @@ class LinkServiceTest {
                     .originalUrl(VALID_URL)
                     .shortCode(SHORT_CODE)
                     .alias(SHORT_CODE)
-                    .expiresAt(LocalDateTime.now().plusDays(7))
+                    .expiresAt(OffsetDateTime.now().plusDays(7))
                     .build();
 
             ShortenResponse expectedResponse = new ShortenResponse(VALID_URL, SHORT_CODE);
@@ -95,14 +103,13 @@ class LinkServiceTest {
                     .originalUrl(VALID_URL)
                     .shortCode(SHORT_CODE)
                     .alias(ALIAS)
-                    .expiresAt(LocalDateTime.now().plusDays(Constants.DEFAULT_TIME_TO_LIVE_VALUE))
+                    .expiresAt(OffsetDateTime.now().plusDays(props.getDefaultTimeToLive()))
                     .build();
 
             ShortenResponse expectedResponse = new ShortenResponse(VALID_URL, ALIAS);
 
             doNothing().when(linkValidator).validateUrl(VALID_URL);
-            doNothing().when(linkValidator).checkAndThrowIfAliasExists(ALIAS);
-            when(linkValidator.resolveTtlDays(null)).thenReturn(Constants.DEFAULT_TIME_TO_LIVE_VALUE);
+            when(linkValidator.resolveTtlDays(null)).thenReturn(props.getDefaultTimeToLive());
             when(linkRepository.save(any(Link.class))).thenReturn(savedLink);
             when(linkMapper.fromEntityToResponse(savedLink)).thenReturn(expectedResponse);
 
@@ -164,8 +171,8 @@ class LinkServiceTest {
     }
 
     @Nested
-    @DisplayName("Тесты метода findByAliasOrShortCode")
-    class FindByAliasOrShortCodeTests {
+    @DisplayName("Тесты метода getByAliasOrShortCode")
+    class GetByAliasOrShortCodeTests {
 
         private Link createActiveLink() {
             return Link.builder()
@@ -173,7 +180,7 @@ class LinkServiceTest {
                     .originalUrl(VALID_URL)
                     .shortCode(SHORT_CODE)
                     .alias(ALIAS)
-                    .expiresAt(LocalDateTime.now().plusDays(1))
+                    .expiresAt(OffsetDateTime.now().plusDays(1))
                     .build();
         }
 
@@ -183,7 +190,7 @@ class LinkServiceTest {
                     .originalUrl(VALID_URL)
                     .shortCode(SHORT_CODE)
                     .alias(ALIAS)
-                    .expiresAt(LocalDateTime.now().minusDays(1))
+                    .expiresAt(OffsetDateTime.now().minusDays(1))
                     .build();
         }
 
@@ -195,11 +202,11 @@ class LinkServiceTest {
             when(linkRepository.findByAlias(ALIAS)).thenReturn(Optional.of(link));
 
             // When
-            Optional<Link> result = linkService.findByAliasOrShortCode(ALIAS);
+            String result = linkService.getUrlByAliasOrShortCode(ALIAS);
 
             // Then
-            assertTrue(result.isPresent());
-            assertEquals(ALIAS, result.get().getAlias());
+            assertFalse(result.isEmpty());
+            assertEquals(ALIAS, result);
         }
 
         @Test
@@ -211,11 +218,11 @@ class LinkServiceTest {
             when(linkRepository.findByShortCode(SHORT_CODE)).thenReturn(Optional.of(link));
 
             // When
-            Optional<Link> result = linkService.findByAliasOrShortCode(SHORT_CODE);
+            String result = linkService.getUrlByAliasOrShortCode(SHORT_CODE);
 
             // Then
-            assertTrue(result.isPresent());
-            assertEquals(SHORT_CODE, result.get().getShortCode());
+            assertFalse(result.isEmpty());
+            assertEquals(SHORT_CODE, result);
         }
 
         @Test
@@ -226,7 +233,7 @@ class LinkServiceTest {
             when(linkRepository.findByAlias(ALIAS)).thenReturn(Optional.of(expiredLink));
 
             // When
-            Optional<Link> result = linkService.findByAliasOrShortCode(ALIAS);
+            String result = linkService.getUrlByAliasOrShortCode(ALIAS);
 
             // Then
             assertTrue(result.isEmpty());
@@ -240,7 +247,7 @@ class LinkServiceTest {
             when(linkRepository.findByShortCode("unknown")).thenReturn(Optional.empty());
 
             // When
-            Optional<Link> result = linkService.findByAliasOrShortCode("unknown");
+            String result = linkService.getUrlByAliasOrShortCode("unknown");
 
             // Then
             assertTrue(result.isEmpty());
@@ -306,9 +313,9 @@ class LinkServiceTest {
             String code = spyService.generateRandomCode();
 
             // Then
-            assertEquals(Constants.SHORT_CODE_LENGTH, code.length());
+            assertEquals(props.getLength(), code.length());
             assertTrue(code.chars().allMatch(ch ->
-                    Constants.SHORT_CODE_ALLOWED_CHARACTERS.indexOf(ch) != -1
+                    props.getShortCodeAllowedCharacters().indexOf(ch) != -1
             ));
         }
     }

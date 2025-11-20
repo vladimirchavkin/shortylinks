@@ -3,7 +3,7 @@ package ru.chavkin.em.linkshortener.entity;
 import jakarta.persistence.*;
 import lombok.*;
 
-import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 
 @Entity
 @Getter
@@ -28,10 +28,10 @@ public class Link {
     private String alias;
 
     @Column(name = "created_at")
-    private LocalDateTime createdAt;
+    private OffsetDateTime createdAt;
 
     @Column(name = "expires_at")
-    private LocalDateTime expiresAt;
+    private OffsetDateTime expiresAt;
 
     @Override
     public String toString() {

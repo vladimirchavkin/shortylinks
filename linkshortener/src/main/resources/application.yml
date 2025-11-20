@@ -1,11 +1,22 @@
 spring:
+  config:
+    import: .env[.properties]
   datasource:
-    url: jdbc:postgresql://localhost:5432/shortener
-    username: postgres
-    password: postgres
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/shortener}
+    username: ${DB_NAME:postgres}
+    password: ${DB_PASSWORD}
   jpa:
     hibernate:
       ddl-auto: none
     show-sql: true
 server:
   port: 8088
+
+
+app:
+  link:
+    shortcode:
+      length: ${SHORT_CODE_LENGTH:6}
+      max-generation-attempts: ${SHORT_CODE_MAX_GENERATION_ATTEMPTS:16}
+      short-code-allowed-characters: ${SHORT_CODE_ALLOWED_CHARACTERS:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789}
+      default-time-to-live: ${DEFAULT_TIME_TO_LIVE_VALUE:3}

@@ -20,7 +20,7 @@ import ru.chavkin.em.linkshortener.repository.LinkRepository;
 
 import java.io.IOException;
 import java.net.HttpURLConnection;
-import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.springframework.test.context.jdbc.Sql.ExecutionPhase.AFTER_TEST_METHOD;
@@ -95,7 +95,7 @@ class LinkControllerIntegrationTest {
             assertEquals("http://example.com", savedLink.getOriginalUrl());
             assertEquals(alias, savedLink.getShortCode());
             assertEquals(alias, savedLink.getAlias()); // shortCode == alias
-            assertTrue(savedLink.getExpiresAt().isAfter(LocalDateTime.now()));
+            assertTrue(savedLink.getExpiresAt().isAfter(OffsetDateTime.now()));
         }
 
         @Test
