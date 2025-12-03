@@ -4,6 +4,7 @@ import jakarta.persistence.*;
 import lombok.*;
 
 import java.time.OffsetDateTime;
+import java.util.Objects;
 
 @Entity
 @Getter
@@ -43,5 +44,17 @@ public class Link {
                 ", createdAt=" + createdAt +
                 ", expiresAt=" + expiresAt +
                 '}';
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        if (o == null || getClass() != o.getClass()) return false;
+        Link link = (Link) o;
+        return Objects.equals(id, link.id) && Objects.equals(originalUrl, link.originalUrl) && Objects.equals(shortCode, link.shortCode) && Objects.equals(alias, link.alias) && Objects.equals(createdAt, link.createdAt) && Objects.equals(expiresAt, link.expiresAt);
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(id, originalUrl, shortCode, alias, createdAt, expiresAt);
     }
 }

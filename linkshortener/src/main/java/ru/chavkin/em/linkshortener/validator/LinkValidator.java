@@ -2,22 +2,16 @@ package ru.chavkin.em.linkshortener.validator;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.stereotype.Component;
-import ru.chavkin.em.linkshortener.entity.LinkConfigurationProperties;
 import ru.chavkin.em.linkshortener.entity.enumerated.ExceptionMessage;
-import ru.chavkin.em.linkshortener.exception.AliasAlreadyExistException;
 import ru.chavkin.em.linkshortener.exception.OriginalLinkValueException;
-import ru.chavkin.em.linkshortener.repository.LinkRepository;
+
+import static ru.chavkin.em.linkshortener.entity.enumerated.Constants.DEFAULT_TIME_TO_LIVE_VALUE;
 
 @Slf4j
 @Component
 @RequiredArgsConstructor
-@EnableConfigurationProperties({LinkConfigurationProperties.class})
 public class LinkValidator {
-
-    private final LinkRepository linkRepository;
-    private final LinkConfigurationProperties props;
 
     /**
      * Method to validate originalUrl.
@@ -38,28 +32,13 @@ public class LinkValidator {
      *
      * @param ttlDays presented ttlDays.
      * @return presented ttlDays(if validation successfully)
-     * or default value ({@link LinkConfigurationProperties}).
      */
     public Integer resolveTtlDays(Integer ttlDays) {
         if (ttlDays == null || ttlDays < 0) {
-            log.debug("Invalid TTL, using default: {}", props.getDefaultTimeToLive());
-            return props.getDefaultTimeToLive();
+            log.debug("Invalid TTL, using default: {}", DEFAULT_TIME_TO_LIVE_VALUE);
+            return DEFAULT_TIME_TO_LIVE_VALUE;
         }
         return ttlDays;
-    }
-
-    /**
-     * Method checks if alias exists and throws {@link AliasAlreadyExistException}.
-     *
-     * @param alias presented alias.
-     */
-    public void checkAndThrowIfAliasExists(String alias) {
-        if (linkRepository.existsByAlias(alias)) {
-            throw new AliasAlreadyExistException(
-                    ExceptionMessage.ALIAS_IS_ALREADY_EXISTS.getErrorMessage(),
-                    ExceptionMessage.ALIAS_IS_ALREADY_EXISTS.getErrorCode()
-            );
-        }
     }
 
 }

@@ -4,39 +4,34 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.mockito.junit.jupiter.MockitoSettings;
-import org.mockito.quality.Strictness;
-import org.springframework.boot.context.properties.EnableConfigurationProperties;
-import ru.chavkin.em.linkshortener.entity.LinkConfigurationProperties;
 import ru.chavkin.em.linkshortener.entity.Link;
 import ru.chavkin.em.linkshortener.entity.dto.ShortenRequest;
 import ru.chavkin.em.linkshortener.entity.dto.ShortenResponse;
+import ru.chavkin.em.linkshortener.entity.enumerated.Constants;
 import ru.chavkin.em.linkshortener.entity.enumerated.ExceptionMessage;
 import ru.chavkin.em.linkshortener.entity.mapper.LinkMapper;
-import ru.chavkin.em.linkshortener.exception.AliasAlreadyExistException;
-import ru.chavkin.em.linkshortener.exception.OriginalLinkValueException;
+import ru.chavkin.em.linkshortener.exception.LinkConstraintException;
+import ru.chavkin.em.linkshortener.exception.LinkExpirationDateValueException;
+import ru.chavkin.em.linkshortener.exception.LinkNotFoundException;
 import ru.chavkin.em.linkshortener.exception.ShortCodeGenerationMaxAttemptsException;
 import ru.chavkin.em.linkshortener.repository.LinkRepository;
 import ru.chavkin.em.linkshortener.validator.LinkValidator;
 
 import java.time.OffsetDateTime;
+import java.time.temporal.ChronoUnit;
 import java.util.Optional;
 
-import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.ArgumentMatchers.*;
+import static org.assertj.core.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
-@DisplayName("Тесты для LinkService")
-@MockitoSettings(strictness = Strictness.LENIENT)
-@EnableConfigurationProperties(LinkConfigurationProperties.class)
+@DisplayName("Тесты LinkService")
 class LinkServiceTest {
-
-    @Mock
-    private LinkConfigurationProperties props;
 
     @Mock
     private LinkRepository linkRepository;
@@ -50,273 +45,275 @@ class LinkServiceTest {
     @InjectMocks
     private LinkService linkService;
 
-    private static final String VALID_URL = "https://example.com";
-    private static final String ALIAS = "myalias";
-    private static final String SHORT_CODE = "abc123";
+    private static final String TEST_URL = "https://www.effective-mobile.ru/";
+    private static final String GENERATED_SHORT_CODE = "AbCd12";
 
     @Nested
-    @DisplayName("Тесты метода createShortLink")
-    class CreateShortLinkTests {
+    @DisplayName("Создание короткой ссылки")
+    class CreateShortLink {
 
         @Test
-        @DisplayName("Успешное создание ссылки без alias — используется shortCode")
-        void createShortLink_WithoutAlias_ShouldUseShortCode() {
-            // Given
-            ShortenRequest request = new ShortenRequest(VALID_URL, null, 7);
+        @DisplayName("Успешное создание без alias → alias = shortCode")
+        void createShortLink_WithoutAlias_ShouldUseShortCodeAsAlias() {
+            // Arrange
+            ShortenRequest request = new ShortenRequest(TEST_URL, null, 7);
             Link savedLink = Link.builder()
                     .id(1L)
-                    .originalUrl(VALID_URL)
-                    .shortCode(SHORT_CODE)
-                    .alias(SHORT_CODE)
+                    .originalUrl(TEST_URL)
+                    .shortCode(GENERATED_SHORT_CODE)
+                    .alias(GENERATED_SHORT_CODE)
+                    .createdAt(OffsetDateTime.now())
                     .expiresAt(OffsetDateTime.now().plusDays(7))
                     .build();
 
-            ShortenResponse expectedResponse = new ShortenResponse(VALID_URL, SHORT_CODE);
+            ShortenResponse expectedResponse = new ShortenResponse(TEST_URL, GENERATED_SHORT_CODE);
 
-            doNothing().when(linkValidator).validateUrl(VALID_URL);
+            doNothing().when(linkValidator).validateUrl(TEST_URL);
             when(linkValidator.resolveTtlDays(7)).thenReturn(7);
+
+            when(linkRepository.existsByShortCode(any())).thenReturn(false);
             when(linkRepository.save(any(Link.class))).thenReturn(savedLink);
             when(linkMapper.fromEntityToResponse(savedLink)).thenReturn(expectedResponse);
 
-            LinkService spyService = spy(linkService);
-            doReturn(SHORT_CODE).when(spyService).generateShortCode();
+            // Act
+            ShortenResponse response = linkService.createShortLink(request);
 
-            // When
-            ShortenResponse response = spyService.createShortLink(request);
-
-            // Then
-            assertEquals(expectedResponse, response);
-            verify(linkRepository).save(argThat(link ->
-                    link.getOriginalUrl().equals(VALID_URL) &&
-                            link.getShortCode().equals(SHORT_CODE) &&
-                            link.getAlias().equals(SHORT_CODE)
-            ));
+            // Assert
+            assertThat(response)
+                    .isNotNull()
+                    .extracting(ShortenResponse::originalUrl, ShortenResponse::alias)
+                    .containsExactly(TEST_URL, GENERATED_SHORT_CODE);
         }
 
         @Test
-        @DisplayName("Успешное создание ссылки с alias")
-        void createShortLink_WithAlias_ShouldSaveWithAlias() {
-            // Given
-            ShortenRequest request = new ShortenRequest(VALID_URL, ALIAS, null);
+        @DisplayName("Успешное создание с кастомным alias")
+        void createShortLink_WithCustomAlias_ShouldSaveWithAlias() {
+            // Arrange
+            String customAlias = "my-link";
+
+            ShortenRequest request = new ShortenRequest(TEST_URL, customAlias, null);
             Link savedLink = Link.builder()
-                    .id(1L)
-                    .originalUrl(VALID_URL)
-                    .shortCode(SHORT_CODE)
-                    .alias(ALIAS)
-                    .expiresAt(OffsetDateTime.now().plusDays(props.getDefaultTimeToLive()))
+                    .id(2L)
+                    .originalUrl(TEST_URL)
+                    .shortCode(GENERATED_SHORT_CODE)
+                    .alias(customAlias)
+                    .createdAt(OffsetDateTime.now())
+                    .expiresAt(OffsetDateTime.now().plusDays(Constants.DEFAULT_TIME_TO_LIVE_VALUE))
                     .build();
 
-            ShortenResponse expectedResponse = new ShortenResponse(VALID_URL, ALIAS);
+            ShortenResponse expectedResponse = new ShortenResponse(TEST_URL, customAlias);
 
-            doNothing().when(linkValidator).validateUrl(VALID_URL);
-            when(linkValidator.resolveTtlDays(null)).thenReturn(props.getDefaultTimeToLive());
+            doNothing().when(linkValidator).validateUrl(TEST_URL);
+            when(linkValidator.resolveTtlDays(null)).thenReturn(Constants.DEFAULT_TIME_TO_LIVE_VALUE);
+
+            when(linkRepository.existsByShortCode(any())).thenReturn(false);
             when(linkRepository.save(any(Link.class))).thenReturn(savedLink);
             when(linkMapper.fromEntityToResponse(savedLink)).thenReturn(expectedResponse);
 
-            LinkService spyService = spy(linkService);
-            doReturn(SHORT_CODE).when(spyService).generateShortCode();
+            // Act
+            ShortenResponse response = linkService.createShortLink(request);
 
-            // When
-            ShortenResponse response = spyService.createShortLink(request);
+            // Assert
+            assertThat(response.alias()).isEqualTo(customAlias);
+            verify(linkRepository).save(argThat(link -> link.getAlias().equals(customAlias)));
+        }
 
-            // Then
-            assertEquals(expectedResponse, response);
+        @Test
+        @DisplayName("Используется дефолтный TTL = 3 дня, если передан null или < 0")
+        void createShortLink_InvalidTtl_ShouldUseDefaultTtl() {
+            // Arrange
+            ShortenRequest request = new ShortenRequest(TEST_URL, "test", -5);
+
+            doNothing().when(linkValidator).validateUrl(TEST_URL);
+            when(linkValidator.resolveTtlDays(-5)).thenReturn(Constants.DEFAULT_TIME_TO_LIVE_VALUE);
+
+            when(linkRepository.existsByShortCode(any())).thenReturn(false);
+            when(linkRepository.save(any(Link.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+            // Act
+            linkService.createShortLink(request);
+
+            // Assert
             verify(linkRepository).save(argThat(link ->
-                    link.getOriginalUrl().equals(VALID_URL) &&
-                            link.getShortCode().equals(SHORT_CODE) &&
-                            link.getAlias().equals(ALIAS)
+                    link.getExpiresAt().isAfter(OffsetDateTime.now().plusDays(2)) &&
+                            link.getExpiresAt().isBefore(OffsetDateTime.now().plusDays(4))
             ));
         }
 
         @Test
-        @DisplayName("Выбрасывает OriginalLinkValueException при null URL")
-        void createShortLink_NullUrl_ShouldThrowOriginalLinkValueException() {
-            // Given
-            ShortenRequest request = new ShortenRequest(null, null, 3);
+        @DisplayName("Создание ссылки с уже существующим alias → LinkConstraintException")
+        void createShortLink_DuplicateAlias_ShouldThrowLinkConstraintException() {
+            // Arrange
+            String duplicateAlias = "my-custom-alias";
+            String generatedShortCode = "XyZ789";
 
-            doThrow(new OriginalLinkValueException(
-                    ExceptionMessage.ORIGINAL_LINK_VALUE_IS_NULL_OR_EMPTY.getErrorMessage(),
-                    ExceptionMessage.ORIGINAL_LINK_VALUE_IS_NULL_OR_EMPTY.getErrorCode()
-            )).when(linkValidator).validateUrl(null);
+            ShortenRequest request = new ShortenRequest(TEST_URL, duplicateAlias, 10);
 
-            // When & Then
-            OriginalLinkValueException exception = assertThrows(
-                    OriginalLinkValueException.class,
-                    () -> linkService.createShortLink(request)
-            );
+            // Act
+            LinkService spyService = spy(linkService);
+            doReturn(generatedShortCode).when(spyService).generateRandomCode();
 
-            assertEquals(ExceptionMessage.ORIGINAL_LINK_VALUE_IS_NULL_OR_EMPTY.getErrorMessage(), exception.getMessage());
-        }
+            doNothing().when(linkValidator).validateUrl(TEST_URL);
+            when(linkValidator.resolveTtlDays(10)).thenReturn(10);
+            when(linkRepository.existsByShortCode(generatedShortCode)).thenReturn(false);
 
-        @Test
-        @DisplayName("Выбрасывает AliasAlreadyExistException при существующем alias")
-        void createShortLink_ExistingAlias_ShouldThrowAliasAlreadyExistException() {
-            // Given
-            ShortenRequest request = new ShortenRequest(VALID_URL, ALIAS, 5);
+            when(linkRepository.save(any(Link.class)))
+                    .thenThrow(new org.hibernate.exception.ConstraintViolationException(
+                            "Duplicate entry 'my-custom-alias' for key 'links.alias'",
+                            null,
+                            "links_alias_key"
+                    ));
 
-            doNothing().when(linkValidator).validateUrl(VALID_URL);
-            doThrow(new AliasAlreadyExistException(
-                    ExceptionMessage.ALIAS_IS_ALREADY_EXISTS.getErrorMessage(),
-                    ExceptionMessage.ALIAS_IS_ALREADY_EXISTS.getErrorCode()
-            )).when(linkValidator).checkAndThrowIfAliasExists(ALIAS);
+            // Assert exception message
+            assertThatThrownBy(() -> spyService.createShortLink(request))
+                    .isInstanceOf(LinkConstraintException.class)
+                    .hasMessageContaining(ExceptionMessage.LINK_WITH_CONSTRAINT_FIELD_ALREADY_EXISTS.getErrorMessage());
 
-            // When & Then
-            AliasAlreadyExistException exception = assertThrows(
-                    AliasAlreadyExistException.class,
-                    () -> linkService.createShortLink(request)
-            );
+            // Assert save
+            ArgumentCaptor<Link> captor = ArgumentCaptor.forClass(Link.class);
+            verify(linkRepository).save(captor.capture());
 
-            assertEquals(ExceptionMessage.ALIAS_IS_ALREADY_EXISTS.getErrorMessage(), exception.getMessage());
+            Link capturedLink = captor.getValue();
+            assertThat(capturedLink.getOriginalUrl()).isEqualTo(TEST_URL);
+            assertThat(capturedLink.getShortCode()).isEqualTo(generatedShortCode);
+            assertThat(capturedLink.getAlias()).isEqualTo(duplicateAlias);
+            assertThat(capturedLink.getExpiresAt())
+                    .isCloseTo(OffsetDateTime.now().plusDays(10), within(1, ChronoUnit.SECONDS));
         }
     }
 
     @Nested
-    @DisplayName("Тесты метода getByAliasOrShortCode")
-    class GetByAliasOrShortCodeTests {
+    @DisplayName("Генерация shortCode")
+    class ShortCodeGeneration {
 
-        private Link createActiveLink() {
+        @Test
+        @DisplayName("Генерация уникального shortCode — успех с первой попытки")
+        void generateShortCode_FirstAttemptSuccess() {
+            // Act
+            when(linkRepository.existsByShortCode(GENERATED_SHORT_CODE)).thenReturn(false);
+
+            LinkService spyService = spy(linkService);
+            doReturn(GENERATED_SHORT_CODE).when(spyService).generateRandomCode();
+
+            String result = spyService.generateShortCode();
+
+            // Assert
+            assertThat(result).isEqualTo(GENERATED_SHORT_CODE);
+            verify(linkRepository, times(1)).existsByShortCode(GENERATED_SHORT_CODE);
+        }
+
+        @Test
+        @DisplayName("Коллизия shortCode — генерация с нескольких попыток")
+        void generateShortCode_WithCollision_ShouldRetryAndSucceed() {
+            // Act
+            LinkService spyService = spy(linkService);
+
+            doReturn("AAAAAA", "BBBBBB", "AbCd12")
+                    .when(spyService).generateRandomCode();
+            
+            when(linkRepository.existsByShortCode("AAAAAA")).thenReturn(true);
+            when(linkRepository.existsByShortCode("BBBBBB")).thenReturn(true);
+            when(linkRepository.existsByShortCode("AbCd12")).thenReturn(false);
+
+            String result = spyService.generateShortCode();
+
+            // Assert
+            assertThat(result).isEqualTo("AbCd12");
+            verify(linkRepository, times(3)).existsByShortCode(any());
+        }
+
+        @Test
+        @DisplayName("Исчерпаны все попытки генерации — исключение")
+        void generateShortCode_AllAttemptsFailed_ShouldThrowException() {
+            // Act
+            LinkService spyService = spy(linkService);
+            doReturn("CODE01").when(spyService).generateRandomCode();
+            when(linkRepository.existsByShortCode("CODE01")).thenReturn(true);
+
+            // Assert
+            assertThatThrownBy(spyService::generateShortCode)
+                    .isInstanceOf(ShortCodeGenerationMaxAttemptsException.class)
+                    .hasMessageContaining("The maximum number of attempts for code generation has been reached.");
+        }
+    }
+
+    @Nested
+    @DisplayName("Получение оригинальной ссылки по коду")
+    class GetOriginalUrl {
+
+        private Link createActiveLink(String shortCode, String alias) {
             return Link.builder()
-                    .id(1L)
-                    .originalUrl(VALID_URL)
-                    .shortCode(SHORT_CODE)
-                    .alias(ALIAS)
+                    .originalUrl(TEST_URL)
+                    .shortCode(shortCode)
+                    .alias(alias)
                     .expiresAt(OffsetDateTime.now().plusDays(1))
                     .build();
         }
 
         private Link createExpiredLink() {
             return Link.builder()
-                    .id(1L)
-                    .originalUrl(VALID_URL)
-                    .shortCode(SHORT_CODE)
-                    .alias(ALIAS)
-                    .expiresAt(OffsetDateTime.now().minusDays(1))
+                    .originalUrl(TEST_URL)
+                    .shortCode("exp123")
+                    .alias("expired")
+                    .expiresAt(OffsetDateTime.now().minusHours(1))
                     .build();
         }
 
         @Test
-        @DisplayName("Находит активную ссылку по alias")
-        void findByAliasOrShortCode_ByAlias_ShouldReturnLink() {
-            // Given
-            Link link = createActiveLink();
-            when(linkRepository.findByAlias(ALIAS)).thenReturn(Optional.of(link));
+        @DisplayName("Поиск по alias — успех")
+        void getUrlByAliasOrShortCode_ByAlias_Success() {
+            // Arrange
+            Link link = createActiveLink("xyz789", "myalias");
+            
+            // Act
+            when(linkRepository.findByAliasOrShortCode("myalias")).thenReturn(Optional.of(link));
 
-            // When
-            String result = linkService.getUrlByAliasOrShortCode(ALIAS);
+            String result = linkService.getUrlByAliasOrShortCode("myalias");
 
-            // Then
-            assertFalse(result.isEmpty());
-            assertEquals(ALIAS, result);
+            // Assert
+            assertThat(result).isEqualTo(TEST_URL);
         }
 
         @Test
-        @DisplayName("Находит активную ссылку по shortCode, если alias не найден")
-        void findByAliasOrShortCode_ByShortCode_ShouldReturnLink() {
-            // Given
-            Link link = createActiveLink();
-            when(linkRepository.findByAlias(SHORT_CODE)).thenReturn(Optional.empty());
-            when(linkRepository.findByShortCode(SHORT_CODE)).thenReturn(Optional.of(link));
+        @DisplayName("Поиск по shortCode — успех (alias не найден)")
+        void getUrlByAliasOrShortCode_ByShortCode_Success() {
+            // Arrange
+            Link link = createActiveLink("short99", null);
+            
+            // Act
+            when(linkRepository.findByAliasOrShortCode("short99")).thenReturn(Optional.of(link));
 
-            // When
-            String result = linkService.getUrlByAliasOrShortCode(SHORT_CODE);
+            String result = linkService.getUrlByAliasOrShortCode("short99");
 
-            // Then
-            assertFalse(result.isEmpty());
-            assertEquals(SHORT_CODE, result);
+            // Assert
+            assertThat(result).isEqualTo(TEST_URL);
         }
 
         @Test
-        @DisplayName("Возвращает empty, если ссылка истекла")
-        void findByAliasOrShortCode_ExpiredLink_ShouldReturnEmpty() {
-            // Given
+        @DisplayName("Ссылка истекла — бросается LinkExpirationDateValueException")
+        void getUrlByAliasOrShortCode_LinkExpired_ThrowsException() {
+            // Arrange
             Link expiredLink = createExpiredLink();
-            when(linkRepository.findByAlias(ALIAS)).thenReturn(Optional.of(expiredLink));
 
-            // When
-            String result = linkService.getUrlByAliasOrShortCode(ALIAS);
+            // Act
+            when(linkRepository.findByAliasOrShortCode("expired")).thenReturn(Optional.of(expiredLink));
 
-            // Then
-            assertTrue(result.isEmpty());
+            // Assert
+            assertThatThrownBy(() -> linkService.getUrlByAliasOrShortCode("expired"))
+                    .isInstanceOf(LinkExpirationDateValueException.class)
+                    .hasMessageContaining("Link expired");
         }
 
         @Test
-        @DisplayName("Возвращает empty, если ссылка не найдена")
-        void findByAliasOrShortCode_NotFound_ShouldReturnEmpty() {
-            // Given
-            when(linkRepository.findByAlias("unknown")).thenReturn(Optional.empty());
-            when(linkRepository.findByShortCode("unknown")).thenReturn(Optional.empty());
+        @DisplayName("Ссылка не найдена — бросается LinkNotFoundException")
+        void getUrlByAliasOrShortCode_NotFound_ThrowsException() {
+            // Act
+            when(linkRepository.findByAliasOrShortCode("unknown")).thenReturn(Optional.empty());
 
-            // When
-            String result = linkService.getUrlByAliasOrShortCode("unknown");
-
-            // Then
-            assertTrue(result.isEmpty());
-        }
-    }
-
-    @Nested
-    @DisplayName("Тесты метода generateShortCode")
-    class GenerateShortCodeTests {
-
-        @Test
-        @DisplayName("Генерирует shortCode после нескольких коллизий")
-        void generateShortCode_WithCollisions_ShouldReturnUniqueCode() {
-            // Given
-            when(linkRepository.existsByShortCode("code1")).thenReturn(true);
-            when(linkRepository.existsByShortCode("code2")).thenReturn(true);
-            when(linkRepository.existsByShortCode("code3")).thenReturn(false);
-
-            LinkService spyService = spy(linkService);
-            doReturn("code1", "code2", "code3").when(spyService).generateRandomCode();
-
-            // When
-            String result = spyService.generateShortCode();
-
-            // Then
-            assertEquals("code3", result);
-            verify(spyService, times(3)).generateRandomCode();
-        }
-
-        @Test
-        @DisplayName("Выбрасывает исключение после исчерпания попыток")
-        void generateShortCode_MaxAttempts_ShouldThrowException() {
-            // Given
-            when(linkRepository.existsByShortCode(anyString())).thenReturn(true);
-
-            LinkService spyService = spy(linkService);
-            doReturn("code").when(spyService).generateRandomCode();
-
-            // When & Then
-            ShortCodeGenerationMaxAttemptsException exception = assertThrows(
-                    ShortCodeGenerationMaxAttemptsException.class,
-                    spyService::generateShortCode
-            );
-
-            assertEquals(
-                    ExceptionMessage.SHORT_CODE_GENERATION_MAX_ATTEMPTS.getErrorMessage(),
-                    exception.getMessage()
-            );
-        }
-    }
-
-    @Nested
-    @DisplayName("Тесты метода generateRandomCode (через рефлексию или spy)")
-    class GenerateRandomCodeTests {
-
-        @Test
-        @DisplayName("Генерирует код длиной 6 символов из разрешённых")
-        void generateRandomCode_ShouldReturnValidLengthAndChars() {
-            // Given
-            LinkService spyService = spy(linkService);
-
-            // When
-            String code = spyService.generateRandomCode();
-
-            // Then
-            assertEquals(props.getLength(), code.length());
-            assertTrue(code.chars().allMatch(ch ->
-                    props.getShortCodeAllowedCharacters().indexOf(ch) != -1
-            ));
+            // Assert
+            assertThatThrownBy(() -> linkService.getUrlByAliasOrShortCode("unknown"))
+                    .isInstanceOf(LinkNotFoundException.class)
+                    .hasMessageContaining("Link not found");
         }
     }
 }

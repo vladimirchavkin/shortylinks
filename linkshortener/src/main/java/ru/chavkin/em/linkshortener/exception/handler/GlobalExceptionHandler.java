@@ -10,13 +10,6 @@ import ru.chavkin.em.linkshortener.exception.*;
 @RestControllerAdvice
 public class GlobalExceptionHandler {
 
-    @ExceptionHandler(AliasAlreadyExistException.class)
-    public ResponseEntity<ErrorResponse> handleAliasAlreadyExistException(AliasAlreadyExistException ex) {
-        return ResponseEntity
-                .status(HttpStatus.BAD_REQUEST)
-                .body(new ErrorResponse(ex.getMessage(), ex.getErrorCode()));
-    }
-
     @ExceptionHandler(AliasValueException.class)
     public ResponseEntity<ErrorResponse> handleAliasValueException(AliasValueException ex) {
         return ResponseEntity
@@ -49,6 +42,13 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ErrorResponse> handleShortCodeGenerationMaxAttemptsException(ShortCodeGenerationMaxAttemptsException ex) {
         return ResponseEntity
                 .status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body(new ErrorResponse(ex.getMessage(), ex.getErrorCode()));
+    }
+
+    @ExceptionHandler(LinkConstraintException.class)
+    public ResponseEntity<ErrorResponse> handleLinkConstraintException(LinkConstraintException ex) {
+        return ResponseEntity
+                .status(HttpStatus.CONFLICT)
                 .body(new ErrorResponse(ex.getMessage(), ex.getErrorCode()));
     }
 
